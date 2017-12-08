@@ -249,7 +249,11 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-
+  struct child *c=malloc(sizeof(*c));
+  c->tid=tid;
+  c->exit_error=t->exit_error;
+  c->used=false;
+  list_push_back(&running_thread()->child_proc,&c->elem);
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
@@ -565,6 +569,11 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->sleep_endtick = 0;
   list_init(&t->filelist);
+  t->parent=running_thread();
+  list_init(&t->child_proc);
+  semaphore_init(&t->child_lock,0);
+  t->waitingon=0;
+  t->exit_error=-100;
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable ();
@@ -699,3 +708,22 @@ comparator_greater_thread_priority (
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+struct thread *tidtothread(tid_t targettid)
+{
+  struct list_elem *e;
+
+  //ASSERT (intr_get_level () == INTR_OFF);
+
+  for (e = list_begin (&all_list); e != list_end (&all_list);
+       e = list_next (e))
+    {
+      struct thread *t = list_entry (e, struct thread, allelem);
+      if(t->tid=targettid)
+      {
+          return t;
+      }
+    }
+  printf("thread not found\n");
+  return NULL;
+}

@@ -59,6 +59,8 @@ static void read_handler(struct intr_frame *);
 static void filesize_handler(struct intr_frame *);
 static void close_handler(struct intr_frame *);
 static void exec_handler(struct intr_frame *);
+static void wait_handler(struct intr_frame *);
+
 struct file *fdtofile(int fd);
 struct file *fdtofilepop(int fd);
 
@@ -90,11 +92,7 @@ syscall_handler(struct intr_frame *f)
   case SYS_EXIT: 
     exit_handler(f);
     break;
-  
-  case SYS_EXEC:
-    exec_handler(f);
-    break;
-  
+      
   case SYS_WRITE: 
     write_handler(f);
     break;
@@ -115,10 +113,18 @@ syscall_handler(struct intr_frame *f)
       read_handler(f);
       break;
       
+      case SYS_EXEC:
+          exec_handler(f);
+          break;
+          
   case SYS_CLOSE:
       close_handler(f);
       break;
       
+      case SYS_WAIT:
+          wait_handler(f);
+          break;
+          
   default:
     printf("[ERROR] system call %d is unimplemented!\n", syscall);
     thread_exit();
@@ -144,7 +150,25 @@ static void exit_handler(struct intr_frame *f)
 {
   int exitcode;
   umem_read(f->esp + 4, &exitcode, sizeof(exitcode));
-
+  //printf("tid=%u wants to exit, parents=%u\n",thread_current()->tid,thread_current()->parent->tid);
+  struct list_elem *e;
+  struct list *temp=&thread_current()->parent->child_proc;
+  
+  for(e=list_begin(temp);e!=list_end(temp);e=list_next(e))
+  {
+      struct child *f=list_entry(e,struct child ,elem);
+      if(f->tid=thread_current()->tid)
+      {
+          f->used=true;
+          f->exit_error=exitcode;
+      }
+  }
+  
+  thread_current()->exit_error=exitcode;
+  if(thread_current()->parent->waitingon==thread_current()->tid)
+  {
+      semaphore_up(&thread_current()->parent->child_lock);
+  }
   sys_exit(exitcode);
 }
 
@@ -229,9 +253,7 @@ static void read_handler(struct intr_frame *f)
     umem_read(f->esp + 12, &size, sizeof(size));
     struct file *targetfile=fdtofile(fd);
     //printf("fileaddress=%u buffer=%u size=%u\n",targetfile,buffer,size);
-    f->eax=file_read(targetfile,buffer,size);
-
-    
+    f->eax=file_read(targetfile,buffer,size);    
 }
 
 
@@ -251,17 +273,19 @@ static void close_handler(struct intr_frame *f)
     struct file *targetfile=fdtofilepop(fd);
     file_close(targetfile);
 }
-
 static void exec_handler(struct intr_frame *f)
 {
     const char *file;
     umem_read(f->esp+4,&file,sizeof(file));
-    //printf("cmdline=%s",file);
-    tid_t pid=process_execute(file);
-    //barrier();
-    //timer_msleep(1000);
-    f->eax=pid;
+    //printf("%u wants to execute %s\n",thread_current()->tid,file);
 
+    f->eax=process_execute(file);
+}
+static void wait_handler(struct intr_frame *f)
+{
+    int pid;
+    umem_read(f->esp+4,&pid,sizeof(pid));
+    f->eax=process_wait(pid);
 }
 
 void addfiletolist(struct file *file,int fd)
@@ -272,6 +296,7 @@ void addfiletolist(struct file *file,int fd)
    // printf("file=%u",file);
     newfilefd->targetfile=file;
     list_push_back(&thread_current()->filelist,&newfilefd->elem);
+    
 }
 struct file *fdtofile(int fd)
 {

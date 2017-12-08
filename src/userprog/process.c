@@ -193,8 +193,10 @@ process_execute(const char *cmdline)
     //don't pass entire line, pass in only first argv
     char *token,*save_ptr;
     token=strtok_r(cmdline," ",&save_ptr);
-    tid = thread_create(token, PRI_DEFAULT, start_process, &syncmdsema);
+    tid = thread_create(token, PRI_DEFAULT, start_process, &syncmdsema);    
+    //printf("new child=%i\n",tid);
     //implement semaphore down
+    semaphore_down(&thread_current()->child_lock);
     semaphore_down(syncmdsema.sema);
     //timer_msleep(100);
 
@@ -232,11 +234,13 @@ start_process(void *cmdline)
     palloc_free_page(syn->cmdline);
     //semaphore up goes here
     semaphore_up(syn->sema);
-
-    //timer_msleep(10);
     if (!success) {
+        semaphore_up(&thread_current()->parent->child_lock);
+
         thread_exit();
     }
+    
+    semaphore_up(&thread_current()->parent->child_lock);
 
     // Start the user process by simulating a return from an
     // interrupt, implemented by intr_exit (in threads/intr-stubs.S).  
@@ -258,8 +262,29 @@ start_process(void *cmdline)
    This function will be implemented in Lab 3.  
    For now, it does nothing. */
 int
-process_wait(tid_t child_tid UNUSED)
+process_wait(tid_t child_tid)
 {
+   // printf("%u wants to wait, target tid=%u\n",thread_current()->tid,child_tid);
+    struct list_elem *e;
+    for (e = list_begin (&thread_current()->child_proc); 
+         e != list_end (&thread_current()->child_proc); 
+         e = list_next (e))
+    {
+        struct child *temp=list_entry(e,struct child,elem);
+        if(temp->tid==child_tid)
+        {
+            thread_current()->waitingon=temp->tid;
+            if(!temp->used)
+            {
+                semaphore_down(&thread_current()->child_lock);
+            }
+            int temp2=temp->exit_error;
+            list_remove(e);
+            return temp2;
+        }
+    }
+   // semaphore_down(&thread_current()->readytogo);
+    //printf("should not reach here\n");
     return -1;
 }
 
